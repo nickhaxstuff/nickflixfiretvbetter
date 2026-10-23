@@ -27,11 +27,15 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
+      - name: Configure Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: ''
 
       - name: Install Android SDK packages
+        shell: bash
         run: |
+          yes | sdkmanager --licenses || true
           sdkmanager --install \
             "platform-tools" \
             "platforms;android-35" \
@@ -42,18 +46,16 @@ jobs:
         run: |
           if [ -f "./gradlew" ]; then
             echo "PROJECT_DIR=." >> "$GITHUB_ENV"
-          elif [ -f "./app/gradlew" ]; then
-            echo "PROJECT_DIR=app" >> "$GITHUB_ENV"
           elif [ -f "./NickFlix-FireTV-Shell/gradlew" ]; then
             echo "PROJECT_DIR=NickFlix-FireTV-Shell" >> "$GITHUB_ENV"
           else
-            echo "ERROR: No Gradle wrapper found."
+            echo "ERROR: Gradle wrapper not found."
             echo "Repository files:"
             find . -maxdepth 3 -type f | head -200
             exit 1
           fi
 
-      - name: Build NickFlix APK
+      - name: Build APK
         env:
           SITE_URL: ${{ inputs.site_url }}
         shell: bash
@@ -63,24 +65,22 @@ jobs:
           ./gradlew --no-daemon assembleDebug \
             -PsiteUrl="$SITE_URL"
 
-      - name: Find APK
-        id: find_apk
+      - name: Locate APK
         shell: bash
         run: |
+          find . -type f -name '*.apk' -print
+
           APK=$(find "$PROJECT_DIR" -type f \
-            -path "*/build/outputs/apk/*/*.apk" \
-            | head -n 1)
+            -path '*/build/outputs/apk/*/*.apk' | head -n 1)
 
           if [ -z "$APK" ]; then
-            echo "ERROR: No APK was generated."
-            find "$PROJECT_DIR" -type f | grep -E '\.(apk|aab)$' || true
+            echo "ERROR: Build finished without producing an APK."
             exit 1
           fi
 
           echo "APK_PATH=$APK" >> "$GITHUB_ENV"
-          echo "Found APK: $APK"
 
-      - name: Upload APK artifact
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: NickFlix-FireTV-APK
