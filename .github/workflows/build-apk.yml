@@ -1,12 +1,13 @@
+
 name: Build NickFlix Fire TV APK
 
 on:
   workflow_dispatch:
     inputs:
       site_url:
-        description: 'Public HTTPS URL of your existing NickFlix website'
+        description: NickFlix website URL
         required: true
-        default: 'https://nickflix.netlify.app/'
+        default: https://nickflix.netlify.app/
         type: string
 
 permissions:
@@ -15,26 +16,74 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Check out project
+      - name: Checkout repository
         uses: actions/checkout@v4
-      - name: Set up Java 17
+
+      - name: Set up Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.9'
+
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
-      - name: Build debug APK
-        run: gradle --no-daemon assembleDebug -PsiteUrl='${{ inputs.site_url }}'
+
+      - name: Install Android SDK packages
+        run: |
+          sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
+
+      - name: Locate Android project
+        shell: bash
+        run: |
+          if [ -f "./gradlew" ]; then
+            echo "PROJECT_DIR=." >> "$GITHUB_ENV"
+          elif [ -f "./app/gradlew" ]; then
+            echo "PROJECT_DIR=app" >> "$GITHUB_ENV"
+          elif [ -f "./NickFlix-FireTV-Shell/gradlew" ]; then
+            echo "PROJECT_DIR=NickFlix-FireTV-Shell" >> "$GITHUB_ENV"
+          else
+            echo "ERROR: No Gradle wrapper found."
+            echo "Repository files:"
+            find . -maxdepth 3 -type f | head -200
+            exit 1
+          fi
+
+      - name: Build NickFlix APK
+        env:
+          SITE_URL: ${{ inputs.site_url }}
+        shell: bash
+        run: |
+          cd "$PROJECT_DIR"
+          chmod +x ./gradlew
+          ./gradlew --no-daemon assembleDebug \
+            -PsiteUrl="$SITE_URL"
+
+      - name: Find APK
+        id: find_apk
+        shell: bash
+        run: |
+          APK=$(find "$PROJECT_DIR" -type f \
+            -path "*/build/outputs/apk/*/*.apk" \
+            | head -n 1)
+
+          if [ -z "$APK" ]; then
+            echo "ERROR: No APK was generated."
+            find "$PROJECT_DIR" -type f | grep -E '\.(apk|aab)$' || true
+            exit 1
+          fi
+
+          echo "APK_PATH=$APK" >> "$GITHUB_ENV"
+          echo "Found APK: $APK"
+
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: nickflix-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: NickFlix-FireTV-APK
+          path: ${{ env.APK_PATH }}
           if-no-files-found: error
           retention-days: 14
