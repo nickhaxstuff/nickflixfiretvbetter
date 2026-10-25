@@ -46,9 +46,13 @@ public class MainActivity extends Activity {
         s.setJavaScriptCanOpenWindowsAutomatically(false);
         s.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
         s.setDefaultTextEncodingName("UTF-8");
+        s.setUserAgentString(s.getUserAgentString() + " AFTNickFlixTV NickFlixTV/2");
         CookieManager.getInstance().setAcceptCookie(true);
         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);
         webView.setBackgroundColor(Color.BLACK);
+        webView.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        webView.setVerticalScrollBarEnabled(false);
+        webView.setHorizontalScrollBarEnabled(false);
         webView.setFocusable(true);
         webView.setFocusableInTouchMode(true);
         webView.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
@@ -64,7 +68,6 @@ public class MainActivity extends Activity {
             }
             @Override public void onPageFinished(WebView view, String url) {
                 enterImmersive();
-                installTvRemoteSupport(view);
                 view.requestFocus(View.FOCUS_DOWN);
             }
         });
@@ -86,33 +89,6 @@ public class MainActivity extends Activity {
         else webView.loadDataWithBaseURL(null, "<html><body style='background:#000;color:white;font:24px sans-serif;padding:32px'>NickFlix setup required: set the hosted site URL in the GitHub Actions workflow.</body></html>", "text/html", "UTF-8", null);
     }
 
-    /** Adds TV-friendly focus styling and D-pad fallback navigation to the host page.
-     * Keys are left to WebView by default, so the embedded player can still handle its own controls.
-     */
-    private void installTvRemoteSupport(WebView view) {
-        String script = "(function(){try{" +
-            "if(window.__nickflixTvRemoteInstalled)return;window.__nickflixTvRemoteInstalled=true;" +
-            "var style=document.createElement('style');style.textContent=" +
-            "'button:focus,a:focus,[tabindex]:focus,input:focus,select:focus,video:focus{outline:3px solid #ff6a00!important;outline-offset:3px!important;}';" +
-            "(document.head||document.documentElement).appendChild(style);" +
-            "function items(){return Array.prototype.slice.call(document.querySelectorAll('a[href],button,input,select,textarea,[tabindex]')).filter(function(e){" +
-            "var r=e.getBoundingClientRect(),s=getComputedStyle(e);return e.tabIndex>=0&&r.width>0&&r.height>0&&s.visibility!=='hidden'&&s.display!=='none'&&!e.disabled;});}" +
-            "document.addEventListener('keydown',function(e){" +
-            "var k=e.key||'',active=document.activeElement;" +
-            "if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].indexOf(k)<0)return;" +
-            "if(active&&(active.tagName==='IFRAME'||active.tagName==='VIDEO'||active.tagName==='AUDIO'||/^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName)))return;" +
-            "var all=items();if(!all.length)return;" +
-            "if(!active||active===document.body||active===document.documentElement||all.indexOf(active)<0){all[0].focus();e.preventDefault();return;}" +
-            "var a=active.getBoundingClientRect(),ax=a.left+a.width/2,ay=a.top+a.height/2,best=null,bestScore=Infinity;" +
-            "all.forEach(function(el){if(el===active)return;var r=el.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2,dx=x-ax,dy=y-ay,primary=0,secondary=0;" +
-            "if(k==='ArrowRight'){if(dx<=2)return;primary=dx;secondary=Math.abs(dy);}else if(k==='ArrowLeft'){if(dx>=-2)return;primary=-dx;secondary=Math.abs(dy);}else if(k==='ArrowDown'){if(dy<=2)return;primary=dy;secondary=Math.abs(dx);}else{if(dy>=-2)return;primary=-dy;secondary=Math.abs(dx);}" +
-            "var score=primary+secondary*2.2;if(score<bestScore){bestScore=score;best=el;}});" +
-            "if(best){best.focus();e.preventDefault();}" +
-            "},true);" +
-            "}catch(e){}})();";
-        view.evaluateJavascript(script, null);
-    }
-
     private void enterImmersive() {
         getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY | View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN);
     }
@@ -124,16 +100,23 @@ public class MainActivity extends Activity {
         enterImmersive();
     }
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
-        // WebView forwards D-pad/OK/Back to the website so its existing TV mode can handle focus.
-        if (event.getKeyCode() == KeyEvent.KEYCODE_BACK && event.getAction() == KeyEvent.ACTION_UP) {
-            if (customView != null) { FrameLayout root = (FrameLayout) webView.getParent(); hideCustomView(root); return true; }
-            if (webView != null && webView.canGoBack()) { webView.goBack(); return true; }
+        // Back never reaches the page as a key event, so ask the site to handle it
+        // (close details/player, jump to the menu) and only leave the app if it has nothing to close.
+        if (event.getKeyCode() == KeyEvent.KEYCODE_BACK) {
+            if (event.getAction() == KeyEvent.ACTION_UP) handleBack();
+            return true;
         }
         return super.dispatchKeyEvent(event);
     }
-    @Override public void onBackPressed() {
-        if (webView != null && webView.canGoBack()) webView.goBack(); else super.onBackPressed();
+    private void handleBack() {
+        if (customView != null) { hideCustomView((FrameLayout) webView.getParent()); return; }
+        if (webView == null) { finish(); return; }
+        webView.evaluateJavascript("(function(){try{return window.__tvBack?window.__tvBack():false}catch(e){return false}})()", value -> {
+            if ("true".equals(value)) return;
+            if (webView != null && webView.canGoBack()) webView.goBack(); else finish();
+        });
     }
+    @Override public void onBackPressed() { handleBack(); }
     @Override protected void onResume() { super.onResume(); if (webView != null) { webView.onResume(); webView.resumeTimers(); } enterImmersive(); }
     @Override protected void onPause() { if (webView != null) { webView.onPause(); webView.pauseTimers(); } super.onPause(); }
     @Override protected void onDestroy() { if (webView != null) { webView.resumeTimers(); webView.destroy(); webView = null; } super.onDestroy(); }
